@@ -18,9 +18,15 @@ logger = logging.get_logger(__name__)
 try:
     import grouped_gemm.ops as ops
 except ImportError:
-    raise RuntimeError(
-        "Grouped GEMM is not available. Please run `pip install --no-build-isolation git+https://github.com/fanshiqing/grouped_gemm@main` (takes less than 5 minutes)"
-    )
+    ops = None
+
+
+def _require_grouped_gemm():
+    if ops is None:
+        raise RuntimeError(
+            "Grouped GEMM is required for Qwen2 MoE layers. Install it with "
+            "`pip install --no-build-isolation git+https://github.com/fanshiqing/grouped_gemm@main`."
+        )
 
 
 class Router(nn.Module):
@@ -66,6 +72,7 @@ class Router(nn.Module):
 class GroupedMLP(nn.Module):
     def __init__(self, config: Qwen2Config, parallel_config: Optional[ParallelismArgs]):
         super().__init__()
+        _require_grouped_gemm()
 
         num_local_experts = config.moe_config.num_experts // parallel_config.expert_parallel_size
         self.merged_gate_up_proj = nn.Parameter(

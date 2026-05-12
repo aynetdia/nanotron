@@ -416,22 +416,25 @@ def set_ranks_logging_level(parallel_context: ParallelContext, logging_config: "
 
 
 def log_libraries_versions(logger: logging.Logger):
-    import datasets
-    import flash_attn
-    import numpy
-    import torch
-    import transformers
-
     import nanotron
+
+    def get_version(module_name: str):
+        try:
+            module = __import__(module_name)
+        except ImportError:
+            return "not installed"
+        return getattr(module, "__version__", "unknown")
+
+    import torch
 
     if dist.get_rank() == 0:
         log_rank("Libraries versions:", logger=logger, level=logging.INFO, rank=0, is_separator=True)
         log_rank(f"nanotron version: {nanotron.__version__}", logger=logger, level=logging.INFO, rank=0)
         log_rank(f"torch version: {torch.__version__}", logger=logger, level=logging.INFO, rank=0)
-        log_rank(f"transformers version: {transformers.__version__}", logger=logger, level=logging.INFO, rank=0)
-        log_rank(f"datasets version: {datasets.__version__}", logger=logger, level=logging.INFO, rank=0)
-        log_rank(f"flash-attn version: {flash_attn.__version__}", logger=logger, level=logging.INFO, rank=0)
-        log_rank(f"numpy version: {numpy.__version__}", logger=logger, level=logging.INFO, rank=0)
+        log_rank(f"transformers version: {get_version('transformers')}", logger=logger, level=logging.INFO, rank=0)
+        log_rank(f"datasets version: {get_version('datasets')}", logger=logger, level=logging.INFO, rank=0)
+        log_rank(f"flash-attn version: {get_version('flash_attn')}", logger=logger, level=logging.INFO, rank=0)
+        log_rank(f"numpy version: {get_version('numpy')}", logger=logger, level=logging.INFO, rank=0)
         log_rank(
             f"\ntorch.utils.collect_env: {torch.utils.collect_env.main()}", logger=logger, level=logging.INFO, rank=0
         )
