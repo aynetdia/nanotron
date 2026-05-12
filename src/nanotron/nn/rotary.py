@@ -1,3 +1,4 @@
+import inspect
 import torch
 from flash_attn.layers.rotary import apply_rotary_emb as flash_apply_rotary_emb
 from torch import nn
@@ -158,14 +159,30 @@ class FlashRotaryEmbedding(OrigFlashRotaryEmbedding):
         device=None,
         seq_len_interpolation_factor=None,
     ):
-        super().__init__(
-            dim,
-            base,
-            interleaved,
-            scale_base,
-            pos_idx_in_fp32,
-            device,
-        )
+        #super().__init__(
+        #    dim,
+        #    base,
+        #    interleaved,
+        #    scale_base,
+        #    pos_idx_in_fp32,
+        #    device,
+        #)
+        init_signature = inspect.signature(OrigFlashRotaryEmbedding.__init__)
+        supported_kwargs = {"dim": dim}
+
+        optional_kwargs = {
+            "base": base,
+            "interleaved": interleaved,
+            "scale_base": scale_base,
+            "pos_idx_in_fp32": pos_idx_in_fp32,
+            "device": device,
+        }
+        for name, value in optional_kwargs.items():
+            if name in init_signature.parameters:
+                supported_kwargs[name] = value
+
+        super().__init__(**supported_kwargs)
+        self.pos_idx_in_fp32 = pos_idx_in_fp32
         self.seq_len_interpolation_factor = seq_len_interpolation_factor
 
     def _update_cos_sin_cache(self, seqlen, device=None, dtype=None):

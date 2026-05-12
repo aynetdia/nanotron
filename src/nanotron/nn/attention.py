@@ -6,6 +6,7 @@ from packaging import version
 
 from nanotron.nn.ring_attention import ring_flash_attn_varlen_func
 from nanotron.nn.llama3_ring_attention import llama3_flash_attn_varlen_qkvpacked_func
+from nanotron.nn.flash_attn_compat import flash_attn_func
 
 # Replace direct import with a function for lazy loading
 def get_ring_flash_attn_cuda():
@@ -26,18 +27,6 @@ if is_torch_flex_attn_available():
     from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
 
-@lru_cache()
-def is_flash_attn_greater_or_equal_2_10():
-    try:
-        import flash_attn
-
-        return version.parse(flash_attn.__version__) >= version.parse("2.1.0")
-    except ImportError:
-        return False
-
-
-if is_flash_attn_greater_or_equal_2_10():
-    from flash_attn.flash_attn_interface import flash_attn_func
 # adapted from transformers.integrations.flex_attention.flex_attention_forward
 def flex_attention_forward(
     module: torch.nn.Module,
@@ -137,13 +126,14 @@ def flex_attention_forward(
     return attn_output, attention_weights
 
 
-def flash_attention_forward(
+def _flash_attention_forward(
     module: torch.nn.Module,
     query: torch.Tensor,  # [b, num_heads, seq_len, head_dim]
     key: torch.Tensor,  # [b, num_kv_heads, seq_len, head_dim]
     value: torch.Tensor,  # [b, num_kv_heads, seq_len, head_dim]
     attention_mask: Optional[torch.Tensor],  # [b, num_heads, seq_len, seq_len]
     max_seqlen: Optional[int],
+    implementation: str,
     dropout: float = 0.0,
     scaling: Optional[float] = None,
     sliding_window: Optional[int] = None,
@@ -167,6 +157,7 @@ def flash_attention_forward(
         q=query,
         k=key,
         v=value,
+        implementation=implementation,
         dropout_p=dropout,
         softmax_scale=scaling,
         causal=is_causal,
@@ -175,6 +166,14 @@ def flash_attention_forward(
     )
     attn_output = attn_output.contiguous()
     return attn_output, None
+
+
+def flash_attention_2_forward(*args, **kwargs) -> Tuple[torch.Tensor, None]:
+    return _flash_attention_forward(*args, implementation="flash_attention_2", **kwargs)
+
+
+def flash_attention_3_forward(*args, **kwargs) -> Tuple[torch.Tensor, None]:
+    return _flash_attention_forward(*args, implementation="flash_attention_3", **kwargs)
 
 
 def sdpa_attention_forward(
@@ -212,7 +211,8 @@ def sdpa_attention_forward(
 
 
 ALL_ATTENTION_FUNCTIONS = {
-    "flash_attention_2": flash_attention_forward,
+    "flash_attention_2": flash_attention_2_forward,
+    "flash_attention_3": flash_attention_3_forward,
     "flex_attention": flex_attention_forward,
     "sdpa": sdpa_attention_forward,
     "ring_flash_triton": lambda *args, **kwargs: get_ring_flash_attn_cuda()(*args, **kwargs),

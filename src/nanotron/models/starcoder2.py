@@ -19,7 +19,6 @@ Some dependencies to update before using:
  - install `flash-attn>=2.5.0`
  """
 
-import inspect
 import math
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -33,6 +32,7 @@ from nanotron.config import ParallelismArgs, Starcoder2Config
 from nanotron.generation.generate_store import AttachableStore
 from nanotron.models import NanotronModel
 from nanotron.nn.activations import ACT2FN
+from nanotron.nn.flash_attn_compat import flash_attn_supports_argument, flash_attn_varlen_func
 from nanotron.nn.layer_norm import TritonLayerNorm
 from nanotron.parallel import ParallelContext
 from nanotron.parallel.parameters import NanotronParameter
@@ -220,9 +220,11 @@ class CoreAttention(nn.Module):
 
     def __init__(self, config: Starcoder2Config, parallel_config: Optional[ParallelismArgs], layer_idx: int):
         super().__init__()
-        from flash_attn.flash_attn_interface import flash_attn_varlen_func
-
-        _flash_supports_window_size = "window_size" in list(inspect.signature(flash_attn_varlen_func).parameters)
+        _flash_supports_window_size = flash_attn_supports_argument(
+            config._attn_implementation,
+            "flash_attn_varlen_func",
+            "window_size",
+        )
 
         assert (
             config.hidden_size % config.num_attention_heads == 0
@@ -231,6 +233,7 @@ class CoreAttention(nn.Module):
         # we still divide the value dimension by the number of heads https://arxiv.org/pdf/1911.02150.pdf
         self.d_v = config.hidden_size // config.num_attention_heads
         self.dropout = config.attn_pdrop
+        self._attn_implementation = config._attn_implementation
 
         assert config.scale_attn_weights, "Scale is only supported in torch 2.1.0"
         # self.scale_factor = 1.0
@@ -254,8 +257,6 @@ class CoreAttention(nn.Module):
         q_sequence_mask: torch.Tensor,  # torch.BoolTensor [batch_size, q_length] (can be broadcasted to that size)
         kv_sequence_mask: torch.Tensor,  # torch.BoolTensor [batch_size, kv_length] (can be broadcasted to that size)
     ):
-        from flash_attn.flash_attn_interface import flash_attn_varlen_func
-
         # TODO @thomasw21: Compute once, instead of computing for each layers.
         cu_seqlens_q = torch.zeros((q_sequence_mask.shape[0] + 1), dtype=torch.int32, device=query_states.device)
         cu_seqlens_k = torch.zeros((kv_sequence_mask.shape[0] + 1), dtype=torch.int32, device=query_states.device)
@@ -269,6 +270,7 @@ class CoreAttention(nn.Module):
             q=query_states,
             k=key_states,
             v=value_states,
+            implementation=self._attn_implementation,
             cu_seqlens_q=cu_seqlens_q,
             cu_seqlens_k=cu_seqlens_k,
             max_seqlen_q=q_sequence_mask.shape[1],

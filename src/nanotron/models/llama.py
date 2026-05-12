@@ -18,9 +18,6 @@ from typing import Dict, List, Optional, Union
 
 import torch
 from flash_attn import bert_padding
-from flash_attn.flash_attn_interface import (
-    flash_attn_varlen_func,
-)
 from torch import nn
 from torch.utils.checkpoint import CheckpointFunction
 
@@ -32,6 +29,7 @@ from nanotron.generation.generate_store import AttachableStore
 from nanotron.logging import log_rank
 from nanotron.models import NanotronModel
 from nanotron.nn.activations import ACT2FN
+from nanotron.nn.flash_attn_compat import flash_attn_varlen_func
 from nanotron.nn.layer_norm import TritonRMSNorm
 from nanotron.parallel import ParallelContext
 from nanotron.parallel.parameters import NanotronParameter
@@ -260,6 +258,7 @@ class CoreAttention(nn.Module):
         self.d_qk = config.hidden_size // config.num_attention_heads
         self.d_v = config.hidden_size // config.num_attention_heads
         self.is_using_mup = config.is_using_mup
+        self._attn_implementation = config._attn_implementation
 
         self.checkpoint_attention = False  # Because flash_attn already does checkpointing
 
@@ -272,8 +271,6 @@ class CoreAttention(nn.Module):
         q_sequence_mask: torch.Tensor,  # torch.BoolTensor [batch_size, q_length] (can be broadcasted to that size)
         kv_sequence_mask: torch.Tensor,  # torch.BoolTensor [batch_size, kv_length] (can be broadcasted to that size)
     ):
-        from flash_attn.flash_attn_interface import flash_attn_varlen_func
-
         # TODO @thomasw21: Compute once, instead of computing for each layers.
         cu_seqlens_q = torch.zeros((q_sequence_mask.shape[0] + 1), dtype=torch.int32, device=query_states.device)
         cu_seqlens_k = torch.zeros((kv_sequence_mask.shape[0] + 1), dtype=torch.int32, device=query_states.device)
@@ -291,6 +288,7 @@ class CoreAttention(nn.Module):
             q=query_states,
             k=key_states,
             v=value_states,
+            implementation=self._attn_implementation,
             cu_seqlens_q=cu_seqlens_q,
             cu_seqlens_k=cu_seqlens_k,
             max_seqlen_q=q_sequence_mask.shape[1],

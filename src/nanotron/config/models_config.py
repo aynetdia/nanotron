@@ -185,8 +185,9 @@ class Qwen2Config:
             assert self._attn_implementation in [
                 "flex_attention",
                 "flash_attention_2",
+                "flash_attention_3",
                 "llama3_ring_attention",
-            ], "Sliding window is only supported for Flex Attention and Flash Attention 2"
+            ], "Sliding window is only supported for Flex Attention and Flash Attention 2/3"
         if self.flex_attention_mask is not None:
             assert (
                 self._attn_implementation == "flex_attention"

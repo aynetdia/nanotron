@@ -1,7 +1,6 @@
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-from flash_attn.modules.mha import flash_attn_varlen_kvpacked_func
 from torch import nn
 from torch.utils.checkpoint import CheckpointFunction
 
@@ -13,6 +12,7 @@ from nanotron.logging import log_rank
 from nanotron.models import NanotronModel
 from nanotron.nn.activations import ACT2FN
 from nanotron.nn.attention import ALL_ATTENTION_FUNCTIONS, get_attention_mask
+from nanotron.nn.flash_attn_compat import flash_attn_varlen_kvpacked_func
 from nanotron.nn.layer_norm import LlamaRMSNorm as RMSNorm
 from nanotron.nn.layer_norm import TritonRMSNorm
 from nanotron.nn.rotary import RotaryEmbedding
@@ -303,17 +303,22 @@ class Qwen2Attention(LogMixin, nn.Module):
                 group=self.cp_pg,
             )  # Not contiguous, similar to flash_attn
         else:
+            if self.config._attn_implementation not in {"flash_attention_2", "flash_attention_3"}:
+                raise ValueError(
+                    "Packed QKV attention currently supports only FlashAttention 2/3 or llama3 ring attention."
+                )
             assert cu_seqlens.dtype == torch.int32
             assert max_seqlen is not None
             assert isinstance(max_seqlen, int)
             attn_output = flash_attn_varlen_kvpacked_func(
                 q,
                 kv,
-                cu_seqlens,
-                cu_seqlens,
-                max_seqlen,
-                max_seqlen,
-                0.0,
+                implementation=self.config._attn_implementation,
+                cu_seqlens_q=cu_seqlens,
+                cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=max_seqlen,
+                max_seqlen_k=max_seqlen,
+                dropout_p=0.0,
                 softmax_scale=None,
                 causal=True,
                 alibi_slopes=None,
