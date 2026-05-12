@@ -235,6 +235,32 @@ class DistributedTrainer:
                 parallel_context=self.parallel_context,
                 root_folder=self.init_checkpoint_path,
             )
+            # ---- change LR after checkpoint load if no annealing ----
+            if self.config.optimizer.lr_decay_starting_step == self.config.tokens.train_steps:
+                if self.config.optimizer.learning_rate_scheduler.learning_rate != self.lr_scheduler.base_lrs[0]:
+                    # Re-read from config so the YAML values actually take effect
+                    new_lr = self.config.optimizer.learning_rate_scheduler.learning_rate
+                    new_min_lr = self.config.optimizer.learning_rate_scheduler.min_decay_lr
+
+                    # 1. Patch the LambdaLR anchor
+                    self.lr_scheduler.base_lrs = [new_lr] * len(self.optimizer.param_groups)
+
+                    # 2. Patch each param group (used by PyTorch internally)
+                    for pg in self.optimizer.param_groups:
+                        pg['initial_lr'] = new_lr
+
+                    # 3. Patch the callable's own stored attributes (nanotron uses a class, not a plain lambda)
+                    for fn in self.lr_scheduler.lr_lambdas:
+                        if hasattr(fn, 'lr'):
+                            fn.lr = new_lr
+                        if hasattr(fn, 'min_decay_lr'):
+                            fn.min_decay_lr = new_min_lr
+
+                    # 4. Recompute pg['lr'] immediately so the first step sees the right value
+                    # _step_count must NOT be incremented, so call get_lr() directly
+                    new_lrs = self.lr_scheduler.get_lr()
+                    for pg, lr in zip(self.optimizer.param_groups, new_lrs):
+                        pg['lr'] = lr
 
         # Define iteration start state
         if self.init_checkpoint_path is not None and self.config.checkpoints.load_lr_scheduler:
