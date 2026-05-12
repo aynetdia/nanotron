@@ -174,7 +174,8 @@ def save_meta(parallel_context: ParallelContext, root_folder: Path, training_met
 
     # There are some types that require manual casting in order to work correctly.
     processed_metadata = process_type(dataclasses.asdict(checkpoint_metadata), type_hooks={Version: lambda x: str(x)})
-
+    for i in range(len(processed_metadata["metas"]["data_stages"])):
+        processed_metadata["metas"]["data_stages"][i]["consumed_tokens_per_dataset_folder"] = {str(k): v for k, v in processed_metadata["metas"]["data_stages"][i]["consumed_tokens_per_dataset_folder"].items()}
     with open(root_folder / CHECKPOINT_FILE_NAME, mode="w") as fo:
         json.dump(processed_metadata, fo, indent=2, sort_keys=True)
 

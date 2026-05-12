@@ -324,70 +324,74 @@ def get_dataloader(
 
     current_stage = None
     # WARNING: we assume we train on last stage
-    stage_idx = len(trainer.config.data_stages) - 1
-    stage_args = trainer.config.data_stages[stage_idx]
-    if trainer.iteration_step+1 == stage_args.start_training_step:
-        log_rank(f"Starting new stage {stage_args.name}", logger=logger, level=logging.INFO, rank=0)
-        # we start a new stage
-        if stage_idx >= len(trainer.metadata.data_stages):
-            trainer.metadata.data_stages.append(DataStageMetadata(
-                name=stage_args.name,
-                start_training_step=stage_args.start_training_step,
-                consumed_train_samples=0,
-                consumed_tokens_per_dataset_folder={},
-                sequence_length=trainer.sequence_length,
-            ))
-    elif len(trainer.metadata.data_stages) < len(trainer.config.data_stages):
-        raise ValueError(f"If you're trying to start a new stage, you need to set `start_training_step` to the step after the last stage's: {trainer.iteration_step+1}")
-    current_stage = trainer.metadata.data_stages[stage_idx]
-    cur_stage_consumed_train_samples = current_stage.consumed_train_samples
-    consumed_tokens_per_dataset_folder = current_stage.consumed_tokens_per_dataset_folder
-    stage_args_data = trainer.config.data_stages[stage_idx].data
-
-    num_remaining_train_steps = compute_remain_train_steps_of_a_data_stage_from_ckp(
-        current_stage, trainer.config, trainer.metadata
-    ) # TODO: check this
-    log_rank(
-        f"Current stage: {current_stage.name} has {num_remaining_train_steps} remaining training steps and has consumed {cur_stage_consumed_train_samples} samples"
-        f"Consumed tokens per dataset folder: {pformat(consumed_tokens_per_dataset_folder)}",
-        logger=logger,
-        level=logging.INFO,
-        rank=0,
-    )
-
-    # warn that if seqlen of stage - 1 has changed, consumed_train_samples=0 so we'll assume we're reading from new folder (so that we can resume training)
-    if current_stage.sequence_length != trainer.metadata.data_stages[-1].sequence_length:
-        raise NotImplementedError("We don't support changing sequence length between stages yet")
-        if current_stage.consumed_train_samples == 0:
-            log_rank(
-                f"Warning: The sequence length of the last stage has changed from {trainer.metadata.data_stages[-1].sequence_length} to {current_stage.sequence_length}. We'll assume we're reading from the beginning of the dataset folders.",
-                logger=logger,
-                level=logging.WARNING,
-                rank=0,
-            )
-        else:
-            # we're resuming training, so that's fine
-            pass
+    # stage_idx = len(trainer.config.data_stages) - 1
+    for stage_idx, stage in enumerate(trainer.config.data_stages):
+        # if trainer.iteration_step < stage.start_training_step:
+        #     stage_idx = max(0, idx - 1)
+        #     break
+        stage_args = trainer.config.data_stages[stage_idx]
+        if trainer.iteration_step+1 == stage_args.start_training_step:
+            log_rank(f"Starting new stage {stage_args.name}", logger=logger, level=logging.INFO, rank=0)
+            # we start a new stage
+            if stage_idx >= len(trainer.metadata.data_stages):
+                trainer.metadata.data_stages.append(DataStageMetadata(
+                    name=stage_args.name,
+                    start_training_step=stage_args.start_training_step,
+                    consumed_train_samples=0,
+                    consumed_tokens_per_dataset_folder={},
+                    sequence_length=trainer.sequence_length,
+                ))
+        elif len(trainer.metadata.data_stages) < len(trainer.config.data_stages):
+            raise ValueError(f"If you're trying to start a new stage, you need to set `start_training_step` to the step after the last stage's: {trainer.iteration_step+1}")
+        current_stage = trainer.metadata.data_stages[stage_idx]
         cur_stage_consumed_train_samples = current_stage.consumed_train_samples
+        consumed_tokens_per_dataset_folder = current_stage.consumed_tokens_per_dataset_folder
+        stage_args_data = trainer.config.data_stages[stage_idx].data
 
-    else:
-        # Prepare last_stages_consumed_tokens_per_dataset_folder which will be used to offset BlendableDataset to avoid reseeing consumed tokens even when sampler has restarted for this stage
-        last_stages_consumed_tokens_per_dataset_folder = {}
-        for stage in trainer.metadata.data_stages[:-1]:
-            for folder_path, consumed_tokens in stage.consumed_tokens_per_dataset_folder.items():
-                last_stages_consumed_tokens_per_dataset_folder[folder_path] = last_stages_consumed_tokens_per_dataset_folder.get(folder_path, 0) + consumed_tokens  
+        num_remaining_train_steps = compute_remain_train_steps_of_a_data_stage_from_ckp(
+            current_stage, trainer.config, trainer.metadata
+        ) # TODO: check this
+        log_rank(
+            f"Current stage: {current_stage.name} has {num_remaining_train_steps} remaining training steps and has consumed {cur_stage_consumed_train_samples} samples"
+            f"Consumed tokens per dataset folder: {pformat(consumed_tokens_per_dataset_folder)}",
+            logger=logger,
+            level=logging.INFO,
+            rank=0,
+        )
+
+        # warn that if seqlen of stage - 1 has changed, consumed_train_samples=0 so we'll assume we're reading from new folder (so that we can resume training)
+        if current_stage.sequence_length != trainer.metadata.data_stages[-1].sequence_length:
+            raise NotImplementedError("We don't support changing sequence length between stages yet")
+            if current_stage.consumed_train_samples == 0:
+                log_rank(
+                    f"Warning: The sequence length of the last stage has changed from {trainer.metadata.data_stages[-1].sequence_length} to {current_stage.sequence_length}. We'll assume we're reading from the beginning of the dataset folders.",
+                    logger=logger,
+                    level=logging.WARNING,
+                    rank=0,
+                )
+            else:
+                # we're resuming training, so that's fine
+                pass
+            cur_stage_consumed_train_samples = current_stage.consumed_train_samples
+
+        else:
+            # Prepare last_stages_consumed_tokens_per_dataset_folder which will be used to offset BlendableDataset to avoid reseeing consumed tokens even when sampler has restarted for this stage
+            last_stages_consumed_tokens_per_dataset_folder = {}
+            for stage in trainer.metadata.data_stages[:-1]:
+                for folder_path, consumed_tokens in stage.consumed_tokens_per_dataset_folder.items():
+                    last_stages_consumed_tokens_per_dataset_folder[folder_path] = last_stages_consumed_tokens_per_dataset_folder.get(folder_path, 0) + consumed_tokens
 
 
 
-    dataloaders[current_stage.name] = get_dataloader_from_data_stage(
-        trainer,
-        stage_args_data,
-        consumed_train_samples_stage=cur_stage_consumed_train_samples,
-        consumed_tokens_per_dataset_folder=consumed_tokens_per_dataset_folder,
-        last_stages_consumed_tokens_per_dataset_folder=last_stages_consumed_tokens_per_dataset_folder,
-        num_remaining_train_steps=num_remaining_train_steps,
-        sanity_check_dataloader_interval=sanity_check_dataloader_interval,
-    )
+        dataloaders[stage_args.name] = get_dataloader_from_data_stage(
+            trainer,
+            stage_args_data,
+            consumed_train_samples_stage=cur_stage_consumed_train_samples,
+            consumed_tokens_per_dataset_folder=consumed_tokens_per_dataset_folder,
+            last_stages_consumed_tokens_per_dataset_folder=last_stages_consumed_tokens_per_dataset_folder,
+            num_remaining_train_steps=num_remaining_train_steps,
+            sanity_check_dataloader_interval=sanity_check_dataloader_interval,
+            )
     return dataloaders
 
 
